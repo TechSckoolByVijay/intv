@@ -107,6 +107,7 @@ function useContinuousMultiMediaRecorder() {
     ]);
 
     const startRecorder = (stream, type) => {
+      chunksRef.current[type] = [];
       const recorder = new MediaRecorder(stream);
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0) chunksRef.current[type].push(e.data);
@@ -123,21 +124,40 @@ function useContinuousMultiMediaRecorder() {
     setRecording(true);
   }, [getAllStreams]);
 
+  // Stop all recorders and wait for data
   const stop = useCallback(() => {
-    Object.values(recordersRef.current).forEach((rec) => rec && rec.state === "recording" && rec.stop());
-    setRecording(false);
+    return new Promise((resolve) => {
+      const types = ["audio", "camera", "screen", "combined"];
+      let stopped = 0;
+      types.forEach((type) => {
+        const recorder = recordersRef.current[type];
+        if (recorder && recorder.state === "recording") {
+          recorder.onstop = () => {
+            stopped += 1;
+            if (stopped === types.length) resolve();
+          };
+          recorder.stop();
+        } else {
+          stopped += 1;
+          if (stopped === types.length) resolve();
+        }
+      });
+      setRecording(false);
+    });
   }, []);
 
-  const getSegment = useCallback(() => {
+  // Wait for stop, then get blobs
+  const getSegment = useCallback(async () => {
+    await stop();
     const result = {};
     for (const type of ["audio", "camera", "screen", "combined"]) {
       result[type] = new Blob(chunksRef.current[type], { type: "video/webm" });
       chunksRef.current[type] = [];
     }
     return result;
-  }, []);
+  }, [stop]);
 
-  useEffect(() => () => stop(), [stop]);
+  useEffect(() => () => { stop(); }, [stop]);
 
   return { start, stop, recording, getSegment };
 }
@@ -170,6 +190,7 @@ export default function Interview() {
   const handleStartInterview = async () => {
     setLoading(true);
     try {
+      console.log("[Interview] Starting interview with name:", interviewName);
       const res = await axios.post("/interview", { interview_name: interviewName });
       setInterviewId(res.data.id);
       const qres = await axios.post("/start_interview", {
@@ -179,9 +200,12 @@ export default function Interview() {
       setQuestions(qres.data);
       setCurrentIdx(0);
       setInterviewStarted(true);
+      console.log("[Interview] Questions loaded. Initializing media streams and recorders...");
       await startContinuousMulti();
+      console.log("[Interview] Recording started for first question.");
       setSnackbar({ open: true, msg: "Interview started & recording!", severity: "success" });
-    } catch {
+    } catch (err) {
+      console.error("[Interview] Failed to start interview:", err);
       setSnackbar({ open: true, msg: "Failed to start interview", severity: "error" });
     } finally {
       setLoading(false);
@@ -192,24 +216,38 @@ export default function Interview() {
     if (loading) return;
     setLoading(true);
     try {
-      const blobs = getSegmentContinuousMulti();
-      console.log(blobs); // Check if blobs have data
+      console.log(`[Interview] [Q${currentIdx + 1}] Stopping recording to upload answer...`);
+      const blobs = await getSegmentContinuousMulti();
+      console.log(`[Interview] [Q${currentIdx + 1}] Got blobs:`, {
+        audio: blobs.audio?.size,
+        camera: blobs.camera?.size,
+        screen: blobs.screen?.size,
+        combined: blobs.combined?.size,
+      });
+
       for (const type of ["audio", "camera", "screen", "combined"]) {
-        if (blobs[type] && blobs[type].size > 0) {
-          const file = new File(
-            [blobs[type]],
-            `${USER_ID}-${interviewId}-${questions[currentIdx].question_id}-${type}.webm`
-          );
+        const blob = blobs[type];
+        if (blob && blob.size > 0) {
+          const fileName = `${USER_ID}-${interviewId}-${questions[currentIdx].question_id}_${type}.webm`;
           const formData = new FormData();
-          formData.append("file", file);
-          await axios.post(
-            `/upload_answer/${USER_ID}/${interviewId}/${questions[currentIdx].question_id}/${type}`,
-            formData,
-            { headers: { "Content-Type": "multipart/form-data" } }
-          );
+          formData.append("file", new File([blob], fileName, { type: "video/webm" }));
+          try {
+            console.log(`[Interview] [Q${currentIdx + 1}] Uploading ${type} file:`, fileName);
+            const res = await axios.post(
+              `/upload_answer/${USER_ID}/${interviewId}/${questions[currentIdx].question_id}/${type}`,
+              formData
+            );
+            console.log(`[Interview] [Q${currentIdx + 1}] ${type} file uploaded:`, res.data);
+          } catch (err) {
+            console.error(`[Interview] [Q${currentIdx + 1}] Failed to upload ${type}:`, err);
+          }
+        } else {
+          console.warn(`[Interview] [Q${currentIdx + 1}] ${type} blob is empty, skipping upload`);
         }
       }
 
+      // Patch backend with file paths
+      console.log(`[Interview] [Q${currentIdx + 1}] Patching backend with recording paths...`);
       await axios.patch(`/question/${questions[currentIdx].id}`, {
         audio_recording_path: `uploads/${USER_ID}/${interviewId}/${questions[currentIdx].question_id}_audio_${USER_ID}-${interviewId}-${questions[currentIdx].question_id}-audio.webm`,
         screen_recording_path: `uploads/${USER_ID}/${interviewId}/${questions[currentIdx].question_id}_screen_${USER_ID}-${interviewId}-${questions[currentIdx].question_id}-screen.webm`,
@@ -217,6 +255,7 @@ export default function Interview() {
         combined_recording_path: `uploads/${USER_ID}/${interviewId}/${questions[currentIdx].question_id}_combined_${USER_ID}-${interviewId}-${questions[currentIdx].question_id}-combined.webm`,
         status: "ATTEMPTED",
       });
+      console.log(`[Interview] [Q${currentIdx + 1}] Backend patched successfully.`);
 
       setQuestions((prev) =>
         prev.map((q, i) =>
@@ -226,21 +265,30 @@ export default function Interview() {
 
       if (currentIdx < questions.length - 1) {
         setCurrentIdx((i) => i + 1);
+        console.log(`[Interview] [Q${currentIdx + 2}] Starting recording for next question...`);
+        await startContinuousMulti();
+        console.log(`[Interview] [Q${currentIdx + 2}] Recording started.`);
       } else {
+        console.log("[Interview] Fetching more questions...");
         const res = await axios.post("/more_questions", {
           user_id: USER_ID,
           interview_id: interviewId,
         });
         if (res.data.length === 0) {
           setInterviewDone(true);
+          console.log("[Interview] No more questions. Stopping recording...");
           await stopContinuousMulti();
         } else {
           setQuestions((prev) => [...prev, ...res.data]);
           setCurrentIdx((i) => i + 1);
+          console.log(`[Interview] [Q${currentIdx + 2}] Starting recording for next question...`);
+          await startContinuousMulti();
+          console.log(`[Interview] [Q${currentIdx + 2}] Recording started.`);
         }
       }
       setSnackbar({ open: true, msg: "Answer uploaded!", severity: "success" });
-    } catch {
+    } catch (err) {
+      console.error(`[Interview] [Q${currentIdx + 1}] Upload or patch failed:`, err);
       setSnackbar({ open: true, msg: "Upload failed", severity: "error" });
     } finally {
       setLoading(false);
@@ -248,6 +296,7 @@ export default function Interview() {
   };
 
   const handleEndInterview = async () => {
+    console.log("[Interview] Ending interview. Stopping all recordings...");
     await stopContinuousMulti();
     setInterviewDone(true);
     setSnackbar({ open: true, msg: "Interview ended.", severity: "info" });
@@ -379,7 +428,7 @@ export default function Interview() {
             variant="contained"
             endIcon={<ArrowForwardIcon />}
             onClick={handleNext}
-            disabled={loading || !recordingContinuousMulti}
+            disabled={loading || interviewDone}
           >
             {loading ? <CircularProgress size={20} /> : "Next"}
           </Button>

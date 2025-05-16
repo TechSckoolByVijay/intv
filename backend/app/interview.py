@@ -122,3 +122,22 @@ def upload_answer_recording(
         buffer.write(file.file.read())
     logger.info(f"Saved {recording_type} recording at {os.path.abspath(file_path)}")
     return {"path": file_path}
+
+@router.post("/upload_answer/{user_id}/{interview_id}/{question_id}/{type}")
+async def upload_answer_type(
+    user_id: int,
+    interview_id: int,
+    question_id: int,
+    type: str,  # e.g., "audio", "camera", "screen", "combined"
+    file: UploadFile = File(...)
+):
+    allowed_types = {"audio", "camera", "screen", "combined"}
+    if type not in allowed_types:
+        raise HTTPException(status_code=400, detail="Invalid recording type")
+    upload_dir = f"uploads/{user_id}/{interview_id}"
+    os.makedirs(upload_dir, exist_ok=True)
+    file_path = f"{upload_dir}/{question_id}_{type}_{file.filename}"
+    with open(file_path, "wb") as buffer:
+        buffer.write(file.file.read())
+    logger.info(f"Saved {type} recording at {os.path.abspath(file_path)}")
+    return {"path": file_path}
