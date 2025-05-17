@@ -14,7 +14,6 @@ import {
   BottomNavigationAction,
   Tooltip,
   LinearProgress,
-  Avatar,
 } from "@mui/material";
 import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 import PauseIcon from "@mui/icons-material/Pause";
@@ -174,35 +173,6 @@ export default function Interview() {
   const jdResume = useJDResumeStatus();
   const [interviewStarted, setInterviewStarted] = useState(false);
   const audioRef = useRef();
-
-  // Add state and ref for camera stream
-  const [cameraStream, setCameraStream] = useState(null);
-  const videoRef = useRef();
-
-  // Start camera when interview starts
-  useEffect(() => {
-    let stream;
-    if (interviewStarted && !cameraStream) {
-      navigator.mediaDevices.getUserMedia({ video: true, audio: false })
-        .then((s) => {
-          setCameraStream(s);
-          if (videoRef.current) videoRef.current.srcObject = s;
-        })
-        .catch(() => setCameraStream(null));
-    }
-    return () => {
-      if (cameraStream) {
-        cameraStream.getTracks().forEach((t) => t.stop());
-      }
-    };
-    // eslint-disable-next-line
-  }, [interviewStarted]);
-
-  useEffect(() => {
-    if (videoRef.current && cameraStream) {
-      videoRef.current.srcObject = cameraStream;
-    }
-  }, [cameraStream]);
 
   useEffect(() => {
     if (audioRef.current && typeof audioRef.current.play === "function") {
@@ -420,56 +390,17 @@ export default function Interview() {
   }
 
   return (
-    <Box sx={{ maxWidth: 1100, mx: "auto", mt: 4 }}>
-      <Paper elevation={10} sx={{ p: 5, borderRadius: 4, mb: 2 }}>
-        <Stack direction="row" spacing={6} alignItems="flex-start">
-          {/* AI Avatar and Question */}
-          <Stack direction="column" alignItems="center" sx={{ minWidth: 260 }}>
-            <Avatar
-              src="/ai-avatar.png"
-              alt="AI"
-              sx={{ width: 200, height: 200, bgcolor: "#2979ff", mb: 2 }}
-            />
-            <Typography variant="subtitle2" color="text.secondary" mb={1}>
-              AI Interviewer
-            </Typography>
-          </Stack>
-          <Box sx={{ flex: 2, minWidth: 350, maxWidth: 600 }}>
-            <AIQuestionAudio ref={audioRef} text={q.question_text} />
-            <Typography variant="h5" fontWeight={700} mb={1}>
-              Question {currentIdx + 1}:
-            </Typography>
-            <Typography variant="body1" sx={{ mb: 3, fontSize: 24 }}>
-              {q.question_text}
-            </Typography>
-          </Box>
-          {/* Candidate Camera */}
-          <Stack direction="column" alignItems="center" sx={{ minWidth: 260 }}>
-            <Box
-              sx={{
-                width: 200,
-                height: 200,
-                borderRadius: 3,
-                overflow: "hidden",
-                boxShadow: 3,
-                bgcolor: "#111",
-                border: "2px solid #2979ff",
-                mb: 2,
-              }}
-            >
-              <video
-                ref={videoRef}
-                autoPlay
-                muted
-                playsInline
-                style={{ width: "100%", height: "100%", objectFit: "cover" }}
-              />
-            </Box>
-            <Typography variant="subtitle2" color="text.secondary" mb={1}>
-              Your Camera
-            </Typography>
-          </Stack>
+    <Box sx={{ maxWidth: 700, mx: "auto", mt: 4 }}>
+      <Paper elevation={10} sx={{ p: 4, borderRadius: 4, mb: 2 }}>
+        <Stack direction="row" alignItems="center" spacing={2} mb={2}>
+          <AIQuestionAudio ref={audioRef} text={q.question_text} />
+          <Typography variant="h6" fontWeight={700}>
+            Question {currentIdx + 1}:
+          </Typography>
         </Stack>
+        <Typography variant="body1" sx={{ mb: 3, fontSize: 20 }}>
+          {q.question_text}
+        </Typography>
         <Stack direction="row" spacing={2} alignItems="center" mb={2}>
           <Tooltip title="Recording Audio">
             <MicIcon color={recordingContinuousMulti ? "primary" : "disabled"} />
